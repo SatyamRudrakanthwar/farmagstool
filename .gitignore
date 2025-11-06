@@ -1,0 +1,6 @@
+models/clip-model/ 
+*.bin 
+*.pt 
+*.zip 
+*.jpg 
+*.png 
