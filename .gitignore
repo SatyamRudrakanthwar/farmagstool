@@ -4,3 +4,4 @@ models/clip-model/
 *.zip 
 *.jpg 
 *.png 
+.env
