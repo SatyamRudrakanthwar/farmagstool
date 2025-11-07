@@ -60,8 +60,8 @@ def get_primary_clip_features(_model, _processor):
     print("Encoding primary pest/disease text prompts...")
     
     # FIX: Use _processor argument name for tokenization
-    pest_tokens = _processor(pest_prompts, padding=True, return_tensors="pt") 
-    disease_tokens = _processor(disease_prompts, padding=True, return_tensors="pt")
+    pest_tokens = _processor(text=pest_prompts, padding=True, return_tensors="pt")
+    disease_tokens = _processor(text=disease_prompts, padding=True, return_tensors="pt")
     
     # Determine the model's device
     device = _model.device
