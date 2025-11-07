@@ -1,9 +1,8 @@
 import streamlit as st
 import torch
-# We use transformers for the model, so the standard 'clip' library import is redundant but harmless.
 from PIL import Image
 from transformers import CLIPProcessor, CLIPModel
-import clip # Kept for potential compatibility, though not used in feature extraction fix
+import clip # Kept for potential compatibility
 
 # --- Model Loading (Cached) ---
 
@@ -17,9 +16,9 @@ def load_primary_clip_model():
 
     try:
         model_id = "srrudra78/agrisavant-clip-model"
-        # The token is handled by the HF_TOKEN environment variable
         model = CLIPModel.from_pretrained(model_id).to(device)
-        processor = CLIPProcessor.from_pretrained(model_id) # Renamed preprocess to processor for clarity
+        # processor is used as the argument name in get_primary_clip_features
+        processor = CLIPProcessor.from_pretrained(model_id) 
         print("✅ Primary CLIP Model loaded successfully from Hugging Face.")
         return model, processor, device
 
@@ -28,12 +27,12 @@ def load_primary_clip_model():
         return None, None, None
 
 # ----------------------------------------------------------------------
-# --- Feature Extraction (Fixes Caching/AttributeError) ---
+# --- Feature Extraction (FIXED) ---
 # ----------------------------------------------------------------------
 
 @st.cache_resource
-# FIX: Renamed 'model' to '_model' to prevent UnhashableParamError
-def get_primary_clip_features(_model, processor): 
+# FIX: Use underscores for both unhashable arguments
+def get_primary_clip_features(_model, _processor): 
     """
     Encodes and caches the pest/disease text prompts using the Hugging Face processor.
     """
@@ -60,10 +59,9 @@ def get_primary_clip_features(_model, processor):
     
     print("Encoding primary pest/disease text prompts...")
     
-    # 1. FIX: TOKENIZE using the Hugging Face processor (CLIPProcessor)
-    # This prepares the tokens in the format the HF model expects.
-    pest_tokens = processor(pest_prompts, padding=True, return_tensors="pt") 
-    disease_tokens = processor(disease_prompts, padding=True, return_tensors="pt")
+    # FIX: Use _processor argument name for tokenization
+    pest_tokens = _processor(pest_prompts, padding=True, return_tensors="pt") 
+    disease_tokens = _processor(disease_prompts, padding=True, return_tensors="pt")
     
     # Determine the model's device
     device = _model.device
@@ -73,12 +71,11 @@ def get_primary_clip_features(_model, processor):
     disease_tokens = {k: v.to(device) for k, v in disease_tokens.items()}
     
     with torch.no_grad():
-        # 2. FIX: Use .get_text_features(**tokens) to replace .encode_text()
-        # The ** syntax unpacks the token dictionary (input_ids, attention_mask)
+        # Use _model for feature extraction
         pest_features = _model.get_text_features(**pest_tokens).mean(dim=0, keepdim=True)
         disease_features = _model.get_text_features(**disease_tokens).mean(dim=0, keepdim=True)
         
-        # 3. Normalize features
+        # Normalize features
         pest_features /= pest_features.norm(dim=-1, keepdim=True)
         disease_features /= disease_features.norm(dim=-1, keepdim=True)
         
@@ -109,7 +106,6 @@ def run_primary_classification(image_batch, model, preprocess, pest_text_feature
     for filename, pil_image in image_batch:
         
         # --- Image Preprocessing ---
-        # Ensure image is 3-channel RGB for CLIP
         if pil_image.mode == "RGBA":
             white_bg = Image.new("RGB", pil_image.size, (255, 255, 255))
             white_bg.paste(pil_image, (0, 0), pil_image)
@@ -117,12 +113,11 @@ def run_primary_classification(image_batch, model, preprocess, pest_text_feature
         else:
             image_rgb = pil_image.convert("RGB")
         
-        # Apply CLIP's preprocessing (assumes 'preprocess' is the CLIPProcessor object)
+        # Apply CLIP's preprocessing (using the processor passed in)
         processed_image = preprocess(images=image_rgb, return_tensors="pt").to(device)
         
         # --- Scoring ---
         with torch.no_grad():
-            # NOTE: For HF transformers, use model.get_image_features() for clarity
             image_features = model.get_image_features(**processed_image)
             image_features /= image_features.norm(dim=-1, keepdim=True)
             
