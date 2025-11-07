@@ -4,6 +4,7 @@ import os
 from PIL import Image # Added for the wrapper
 
 # --- CONFIGURATION PARAMETERS ---
+# (CONFIG dictionary remains unchanged)
 CONFIG = {
     "RESIZE_DIM": (600, 600),
     # --- General ---
@@ -23,13 +24,12 @@ CONFIG = {
     "SKY_HSV_UPPER": np.array([130, 255, 255]),
 }
 
-#
 # --- (Your provided functions: segment_healthy_leaf, segment_pale_leaf, ---
 # ---  exclude_sky, _fill_holes, remove_background_hybrid) ---
-# --- (Pasting them here without any changes) ---
-#
+# NOTE: These functions must be included in the file above the wrapper.
 
 def segment_healthy_leaf(img):
+    # ... (Your segment_healthy_leaf function code) ...
     h, w = img.shape[:2]
     img_16bit = img.astype(np.int16)
     b, g, r = cv2.split(img_16bit)
@@ -69,6 +69,7 @@ def segment_healthy_leaf(img):
 
 
 def segment_pale_leaf(img):
+    # ... (Your segment_pale_leaf function code) ...
     lab = cv2.cvtColor(img, cv2.COLOR_BGR2LAB)
     a_channel = lab[:, :, 1]
     _, lab_mask = cv2.threshold(a_channel, 125, 255, cv2.THRESH_BINARY_INV)
@@ -89,6 +90,7 @@ def segment_pale_leaf(img):
 
 
 def exclude_sky(img, current_mask):
+    # ... (Your exclude_sky function code) ...
     h, w = img.shape[:2]
     
     sky_roi_height = int(h * CONFIG["SKY_EXCLUSION_THRESHOLD"])
@@ -110,6 +112,7 @@ def exclude_sky(img, current_mask):
 
 
 def _fill_holes(mask):
+    # ... (Your _fill_holes function code) ...
     contours, _ = cv2.findContours(mask, cv2.RETR_EXTERNAL, cv2.CHAIN_APPROX_SIMPLE)
     if not contours:
         return mask 
@@ -120,6 +123,7 @@ def _fill_holes(mask):
 
 
 def remove_background_hybrid(img):
+    # ... (Your remove_background_hybrid function code) ...
     orig_h, orig_w = img.shape[:2]
     small = cv2.resize(img, CONFIG["RESIZE_DIM"])
     hsv = cv2.cvtColor(small, cv2.COLOR_BGR2HSV)
@@ -183,7 +187,7 @@ def remove_background_hybrid(img):
 
 
 # -----------------------------------------------------------------
-# --- NEW WRAPPER FUNCTION ---
+# --- NEW WRAPPER FUNCTION (FIXED) ---
 # -----------------------------------------------------------------
 def remove_bg_from_pil_and_get_bgr(pil_image: Image.Image) -> np.ndarray:
     """
@@ -191,34 +195,44 @@ def remove_bg_from_pil_and_get_bgr(pil_image: Image.Image) -> np.ndarray:
     Takes a PIL (RGB) image, runs BG removal, and returns a 3-channel
     BGR image (on a white background) ready for color analysis.
     """
-    # 1. Convert PIL (RGB) to BGR for processing
+    # 1. Convert PIL (RGB) to BGR for OpenCV processing
     bgr_image = cv2.cvtColor(np.array(pil_image), cv2.COLOR_RGB2BGR)
 
     try:
-        # 2. Run your hybrid background removal
+        # 2. Run hybrid background removal, which returns BGR-Alpha (RGBA)
         rgba, result, _, _ = remove_background_hybrid(bgr_image)
 
         if result != "Success" or rgba is None:
             # If BG removal fails, return the original BGR image
             return bgr_image
 
-        # 3. Convert 4-channel RGBA to 3-channel BGR
-        # Create a white background
-        bg = np.full((rgba.shape[0], rgba.shape[1], 3), 255, dtype=np.uint8)
+        # 3. Separate BGR and Alpha channels (OpenCV format)
+        b, g, r, alpha = cv2.split(rgba)
         
-        # Get the alpha mask and convert to 3 channels
-        alpha = rgba[:, :, 3] / 255.0
-        alpha_mask = cv2.merge([alpha, alpha, alpha])
+        # Normalize alpha channel to 0.0 - 1.0 float scale
+        alpha_norm = alpha / 255.0
+        alpha_mask = cv2.merge([alpha_norm, alpha_norm, alpha_norm])
         
-        # Get the RGB channels
-        rgb = rgba[:, :, :3]
+        # Create a white background (3 channels, BGR)
+        bg = np.full(bgr_image.shape, 255, dtype=np.uint8)
         
-        # Alpha-blend the foreground (rgb) onto the background (bg)
-        blended_bgr = (rgb * alpha_mask + bg * (1 - alpha_mask)).astype(np.uint8)
+        # 4. Alpha-blend the foreground (b, g, r) onto the background (bg)
+        # Note: We must treat B, G, and R channels individually for blending.
+        
+        # Convert BGR channels to float for accurate blending
+        bgr_float = cv2.merge([b, g, r]).astype(np.float32)
+        bg_float = bg.astype(np.float32)
+        
+        # Blending formula: F * alpha + B * (1 - alpha)
+        foreground = bgr_float * alpha_mask
+        background = bg_float * (1 - alpha_mask)
+        
+        # Merge and convert back to uint8
+        blended_bgr = (foreground + background).astype(np.uint8)
         
         return blended_bgr
 
     except Exception as e:
         print(f"Warning: BG removal failed with error: {e}. Returning original image.")
-        # If any other error occurs, return the original
+        # If any other error occurs, return the original BGR image
         return bgr_image
