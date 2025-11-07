@@ -66,7 +66,49 @@ def get_primary_clip_features(_model): # Pass model to link cache
         disease_features /= disease_features.norm(dim=-1, keepdim=True)
         
     return pest_features, disease_features
+# Assuming this function receives the model and the tokenizer/processor from load_primary_clip_model()
 
+@st.cache_resource
+def get_primary_clip_features(model, tokenizer): # <-- Ensure it accepts tokenizer/processor
+    """
+    Encodes and caches the pest/disease text prompts.
+    """
+    # Define text prompts
+    pest_prompts = [
+        "a leaf infested with aphids",
+        "a leaf having aphids",
+        "a leaf with whiteflies on it",
+        "a leaf attacked by white flies",
+        "a leaf attacked by leafminer insects",
+        "a leaf with leafminer damage",
+        "a leaf infested by Aphis gossypii pests",
+        "a leaf attacked by pests or insects"
+    ]
+    
+    disease_prompts = [
+        "a diseased leaf without any insects",
+        "a leaf infected by fungus or bacteria but no visible pests",
+        "a leaf with curling or yellowing due to disease, not insects",
+        "a leaf showing leaf spot or mosaic disease",
+        "a leaf damaged by nutrient deficiency or virus but not insects"
+    ]
+    
+    print("Encoding primary pest/disease text prompts...")
+    
+    # --- FIX 1: TOKENIZE using the tokenizer/processor (e.g., loaded by Hugging Face) ---
+    # We must use the tokenizer/processor returned by load_primary_clip_model
+    pest_tokens = tokenizer(pest_prompts, padding=True, return_tensors="pt") 
+    disease_tokens = tokenizer(disease_prompts, padding=True, return_tensors="pt")
+    
+    # --- FIX 2: GET FEATURES using the model's correct method ---
+    with torch.no_grad():
+        # Get pest features (ensure model is on the correct device if needed, 
+        # but often the features calculation handles it if the inputs are moved)
+        # Note: We use .to('cpu') here for safety, assuming the model is loaded on CPU as per the log
+        pest_features = model.get_text_features(**pest_tokens).to('cpu').mean(dim=0, keepdim=True)
+        disease_features = model.get_text_features(**disease_tokens).to('cpu').mean(dim=0, keepdim=True)
+    
+    return pest_features, disease_features
 # --- Main Classification Function ---
 
 def run_primary_classification(image_batch, model, preprocess, pest_text_features, disease_text_features, device):
