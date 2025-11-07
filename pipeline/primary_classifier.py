@@ -8,16 +8,25 @@ from PIL import Image
 @st.cache_resource
 def load_primary_clip_model():
     """
-    Loads the ViT-L/14 CLIP model and preprocess function.
+    Loads the CLIP model and preprocess function directly from Hugging Face Hub.
     """
+    import torch
+    import streamlit as st
+    from transformers import CLIPProcessor, CLIPModel
+
     device = "cuda" if torch.cuda.is_available() else "cpu"
-    print(f"Loading Primary CLIP Model (ViT-L/14) on {device}...")
+    print(f"Loading Primary CLIP Model (Hugging Face) on {device}...")
+
     try:
-        model, preprocess = clip.load("ViT-L/14", device=device)
-        print("Primary CLIP Model loaded successfully.")
+        # Load from Hugging Face Hub (your uploaded model)
+        model_id = "srrudra78/agrisavant-clip-model"
+        model = CLIPModel.from_pretrained(model_id).to(device)
+        preprocess = CLIPProcessor.from_pretrained(model_id)
+        print("✅ Primary CLIP Model loaded successfully from Hugging Face.")
         return model, preprocess, device
+
     except Exception as e:
-        st.error(f"Error loading Primary CLIP model: {e}")
+        st.error(f"❌ Failed to load CLIP model from Hugging Face: {e}")
         return None, None, None
 
 @st.cache_resource
