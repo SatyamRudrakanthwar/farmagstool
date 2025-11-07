@@ -23,20 +23,26 @@ from pipeline.disease_pipeline import (
     run_disease_classification,
     run_disease_pipeline_by_crop
 )
-# --- Import new pipeline files ---
+
+# --- GUARANTEED IMPORTS FOR PRIMARY CLASSIFIER ---
+# We move these outside of the try/except block to ensure they load 
+# since we know the file exists and the model is now downloadable.
+from pipeline.primary_classifier import (
+    load_primary_clip_model, # <--- GUARANTEED TO LOAD
+    get_primary_clip_features,
+    run_primary_classification
+)
+# ----------------------------------------------------
+
+# --- Optional: Keep the exception handling for non-critical files ---
 try:
     from pipeline import color_analysis
     from pipeline import bg_remover 
-    
-    # --- NEW: Import the primary classifier functions ---
-    from pipeline.primary_classifier import (
-        load_primary_clip_model,
-        get_primary_clip_features,
-        run_primary_classification
-    )
 except ImportError:
-    st.error("Could not import pipeline modules. Please ensure 'primary_classifier.py' exists.")
-    pass # Will be handled by the main app logic
+    st.error("Could not import color or BG remover pipeline modules.")
+    pass 
+
+# ... rest of the app.py ...
 
 # -----------------------------------------------------------------
 # --- Worker Functions (Now just wrappers) ---
