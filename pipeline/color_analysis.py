@@ -1,8 +1,14 @@
+# pipeline/color_analysis.py - FIX: Set Matplotlib backend for thread safety
+
+import matplotlib
+# FIX 1: Set the Agg backend BEFORE importing pyplot for thread-safe plotting in parallel threads
+matplotlib.use('Agg') 
+import matplotlib.pyplot as plt
+
 import cv2
 import numpy as np
 from sklearn.cluster import KMeans
 from skimage.morphology import skeletonize
-import matplotlib.pyplot as plt
 from typing import Dict, List, Tuple
 from PIL import Image, ImageDraw, ImageFont
 import io
@@ -19,7 +25,8 @@ def plot_color_bar_graph(colors: np.ndarray, counts: np.ndarray, title: str) -> 
     Creates a bar graph from color clusters and returns it as an image.
     """
     # --- Create the Matplotlib Bar Plot ---
-    fig, ax = plt.subplots(figsize=(6, 4)) # 6-inch width, 4-inch height
+    # FIX 2: Ensure fig and buf are closed (already present in your code, which is good practice)
+    fig, ax = plt.subplots(figsize=(6, 4)) 
     
     # Convert RGB colors (0-255) to Matplotlib format (0-1)
     bar_colors = colors / 255.0
@@ -48,7 +55,7 @@ def plot_color_bar_graph(colors: np.ndarray, counts: np.ndarray, title: str) -> 
     return img_rgb
 
 # -----------------------------------------------------------------
-# --- Core Image Processing Functions (Refactored) ---
+# --- Core Image Processing Functions (Rest remain unchanged) ---
 # -----------------------------------------------------------------
 
 def leaf_vein_skeleton(image_bgr: np.ndarray) -> np.ndarray:
@@ -59,7 +66,7 @@ def leaf_vein_skeleton(image_bgr: np.ndarray) -> np.ndarray:
     clahe = cv2.createCLAHE(clipLimit=2.0, tileGridSize=(8, 8))
     enhanced = clahe.apply(filtered)
     edges = cv2.adaptiveThreshold(enhanced, 255, cv2.ADAPTIVE_THRESH_GAUSSIAN_C,
-                                    cv2.THRESH_BINARY_INV, 15, 3)
+                                     cv2.THRESH_BINARY_INV, 15, 3)
     kernel = cv2.getStructuringElement(cv2.MORPH_ELLIPSE, (3, 3))
     edges = cv2.morphologyEx(edges, cv2.MORPH_CLOSE, kernel)
 
@@ -173,6 +180,7 @@ def _get_colors_from_image(image_bgr: np.ndarray) -> Tuple[List, List]:
             all_boundary_colors.extend([stats['rgb']] * stats['count'])
     
     except Exception as e:
+        # NOTE: This exception catch is good, but won't catch thread issues in batch mode.
         print(f"Warning: Color analysis failed for one image: {e}")
         # Return empty lists if this image fails
         return [], []
@@ -231,9 +239,6 @@ def generate_individual_color_graph(image_bgr: np.ndarray, num_clusters: int = 5
 def run_batch_color_analysis(image_group: List[Tuple[str, np.ndarray]], num_clusters: int = 8) -> np.ndarray:
     """
     Runs color analysis on a BATCH of BGR images and returns one AGGREGATED bar graph.
-    
-    Args:
-        image_group: A list of tuples, e.g., [('fname1', bgr_array_1), ...]
     """
     all_vein_colors = []
     all_boundary_colors = []
