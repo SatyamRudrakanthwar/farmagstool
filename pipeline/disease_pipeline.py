@@ -101,21 +101,23 @@ def run_crop_classification(image_batch, model, processor, device, num_clusters=
 @st.cache_resource
 def load_clip_classifier():
     """
-    Loads the CLIP model from a local folder.
+    Loads the CLIP model from Hugging Face Hub (fallbacks to local if needed).
     """
     try:
         from transformers import pipeline
-        local_model_path = "models/clip-model" 
-        print(f"Loading CLIP model from local path: {local_model_path}")
+        local_model_path = "srrudra78/agrisavant-clip-model"  # Hugging Face repo
+        print(f"Loading CLIP model from Hugging Face Hub: {local_model_path}")
         classifier = pipeline(
-            task="zero-shot-image-classification", 
+            task="zero-shot-image-classification",
             model=local_model_path
         )
-        print("CLIP model loaded successfully from local files.")
+        print("✅ CLIP model loaded successfully from Hugging Face.")
         return classifier
     except Exception as e:
-        st.error(f"Error loading CLIP model from local files: {e}")
+        import streamlit as st
+        st.error(f"Error loading CLIP model from Hugging Face: {e}")
         return None
+
 
 def run_health_classification(crop_name, image_group, classifier):
     if not image_group or classifier is None:
