@@ -200,7 +200,7 @@ if uploaded_files:
             
             # --- NEW: Load Primary CLIP Model ---
             primary_clip_model, primary_preprocess, primary_device = load_primary_clip_model()
-            pest_text_features, disease_text_features = get_primary_clip_features(primary_clip_model)
+            pest_text_features, disease_text_features = get_primary_clip_features(primary_clip_model, primary_preprocess)
 
         if not all([pest_model, dino_model, clip_classifier, primary_clip_model]):
             st.error("One or more models failed to load. Cannot proceed.")
