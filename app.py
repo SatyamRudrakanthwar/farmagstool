@@ -23,26 +23,20 @@ from pipeline.disease_pipeline import (
     run_disease_classification,
     run_disease_pipeline_by_crop
 )
-
-# --- GUARANTEED IMPORTS FOR PRIMARY CLASSIFIER ---
-# We move these outside of the try/except block to ensure they load 
-# since we know the file exists and the model is now downloadable.
-from pipeline.primary_classifier import (
-    load_primary_clip_model, # <--- GUARANTEED TO LOAD
-    get_primary_clip_features,
-    run_primary_classification
-)
-# ----------------------------------------------------
-
-# --- Optional: Keep the exception handling for non-critical files ---
+# --- Import new pipeline files ---
 try:
     from pipeline import color_analysis
     from pipeline import bg_remover 
+    
+    # --- NEW: Import the primary classifier functions ---
+    from pipeline.primary_classifier import (
+        load_primary_clip_model,
+        get_primary_clip_features,
+        run_primary_classification
+    )
 except ImportError:
-    st.error("Could not import color or BG remover pipeline modules.")
-    pass 
-
-# ... rest of the app.py ...
+    st.error("Could not import pipeline modules. Please ensure 'primary_classifier.py' exists.")
+    pass # Will be handled by the main app logic
 
 # -----------------------------------------------------------------
 # --- Worker Functions (Now just wrappers) ---
@@ -200,7 +194,7 @@ if uploaded_files:
             
             # --- NEW: Load Primary CLIP Model ---
             primary_clip_model, primary_preprocess, primary_device = load_primary_clip_model()
-            pest_text_features, disease_text_features = get_primary_clip_features(primary_clip_model, primary_preprocess)
+            pest_text_features, disease_text_features = get_primary_clip_features(primary_clip_model)
 
         if not all([pest_model, dino_model, clip_classifier, primary_clip_model]):
             st.error("One or more models failed to load. Cannot proceed.")
