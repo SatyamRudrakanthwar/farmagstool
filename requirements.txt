@@ -3,7 +3,7 @@
 
 # PyTorch (Downgraded to 2.5.1 to bypass the YOLO/WeightsUnpickler security error)
 # This version is stable and precedes the major breaking change in 2.6
-torch==2.5.1
+torch==2.3.0
 torchvision==0.18.1
 torchaudio==2.5.1
 
