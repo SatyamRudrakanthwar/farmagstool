@@ -1,27 +1,19 @@
-# This line is crucial for installing PyTorch with CPU-only support
---extra-index-url https://download.pytorch.org/whl/cpu
+# PyTorch (CPU-only) - NO VERSIONS
+torch
+torchvision
+torchaudio
 
-# PyTorch (Downgraded to 2.5.1 to bypass the YOLO/WeightsUnpickler security error)
-# This version is stable and precedes the major breaking change in 2.6
-torch==2.3.0
-torchvision==0.18.1
-torchaudio==2.5.1
-
-# Core App & ML
-streamlit==1.33.0
-pandas==2.2.1
-plotly==5.18.0
-ultralytics==8.1.0
-opencv-python-headless==4.9.0.80
-pillow==10.2.0
-scikit-learn==1.4.1.post1
-matplotlib==3.8.3
-transformers==4.38.2
-supervision==0.18.0
-numpy==1.26.4
-scikit-image==0.22.0
-
-# --- Dependencies for Remote API (HTTP requests) ---
-requests
-huggingface-hub
-boto3
+# Core App & ML - NO VERSIONS
+streamlit
+pandas
+plotly
+ultralytics
+opencv-python-headless
+pillow
+scikit-learn
+matplotlib
+transformers
+openai-clip
+supervision
+numpy
+scikit-image
