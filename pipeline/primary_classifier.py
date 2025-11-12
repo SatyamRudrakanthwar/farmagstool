@@ -1,43 +1,35 @@
 import streamlit as st
-import requests  # NEW: For making API calls
-import os        # NEW: For reading environment variables
-import base64    # NEW: For encoding images
-import io        # NEW: For handling image bytes
+import os              # NEW: To read environment variables
+import requests        # NEW: To make HTTP API calls
+import base64          # NEW: To encode images for API transfer
+import io              # NEW: To handle image bytes
 from PIL import Image
 
-# --- Configuration and Environment Setup ---
-
-# Load configuration from OS environment variables
+# --- Configuration (LOADED FROM OS ENVIRONMENT) ---
 HUGGINGFACE_API_URL = os.environ.get(
     "HF_INFERENCE_ENDPOINT_URL", 
-    "https://api-inference.huggingface.co/models/openai/clip-vit-large-patch14" 
+    "https://api-inference.huggingface.co/models/openai/clip-vit-base-patch16" # Fallback/Reference URL
 )
 HF_API_TOKEN = os.environ.get("HF_API_TOKEN")
 
+# Setup Headers for API call with the token
 HEADERS = {
     "Authorization": f"Bearer {HF_API_TOKEN}",
     "Content-Type": "application/json"
-} if HF_API_TOKEN else {"Content-Type": "application/json"}
-
+} if HF_API_TOKEN else {}
 
 # --- Prompt Definitions and Mapping ---
-# These replace the torch/clip text feature encoding
+# These prompts were used to compute the features locally; they are now passed to the API.
 PEST_PROMPTS = [
-    "a leaf infested with aphids",
-    "a leaf having aphids",
-    "a leaf with whiteflies on it",
-    "a leaf infested by white flies",
-    "a leaf attacked by leafminer insects",
-    "a leaf with leafminer damage",
-    "a leaf infested by Aphis gossypii pests",
+    "a leaf infested with aphids", "a leaf having aphids", "a leaf with whiteflies on it", 
+    "a leaf infested by white flies", "a leaf attacked by leafminer insects", 
+    "a leaf with leafminer damage", "a leaf infested by Aphis gossypii pests", 
     "a leaf attacked by pests or insects"
 ]
 DISEASE_PROMPTS = [
-    "a diseased leaf without any insects",
-    "a leaf infected by fungus or bacteria but no visible pests",
-    "a leaf with curling or yellowing due to disease, not insects",
-    "a leaf showing leaf spot or mosaic disease",
-    "a leaf damaged by nutrient deficiency or virus but not insects"
+    "a diseased leaf without any insects", "a leaf infected by fungus or bacteria but no visible pests", 
+    "a leaf with curling or yellowing due to disease, not insects", 
+    "a leaf showing leaf spot or mosaic disease", "a leaf damaged by nutrient deficiency or virus but not insects"
 ]
 ALL_CANDIDATE_PROMPTS = PEST_PROMPTS + DISEASE_PROMPTS
 
@@ -69,37 +61,34 @@ def pil_to_base64(pil_image):
 @st.cache_resource
 def load_primary_clip_model():
     """
-    Simulates model loading by returning configuration/status.
+    Replaces local model loading: Checks API configuration and returns necessary config values.
     
-    Returns: (api_status, api_url, device_str)
+    Returns: (api_url, api_status_flag, device_str)
     """
-    if not HF_API_TOKEN:
-        st.error("Error: HF_API_TOKEN is not configured in the environment.")
-        # Returning None, None, None to signal failure, matching original logic
+    if not HF_API_TOKEN or not HUGGINGFACE_API_URL:
+        st.error("Error: HF_API_TOKEN or HUGGINGFACE_API_URL is missing.")
+        # Returns None, None, None to signal failure, matching original logic
         return None, None, None 
 
-    print(f"Using Primary CLIP Model via remote endpoint: {HUGGINGFACE_API_URL}...")
+    print(f"[INFO] Using Primary CLIP Model via remote endpoint: {HUGGINGFACE_API_URL}...")
     
-    # We return the API_URL as the 'model', and True as the 'preprocess' for dependent code
-    # The device string is irrelevant but maintained for signature compatibility
+    # We return the API_URL (model), a dummy status (preprocess), and a dummy device string
     return HUGGINGFACE_API_URL, True, "remote" 
 
 
 # --- Feature Encoding (Cached) - NOW PROMPT CACHING ---
 
 @st.cache_resource
-def get_primary_clip_features(_model_url, _device): 
+def get_primary_clip_features(_model_url): 
     """
-    Simulates encoding by returning the necessary text prompts/map.
+    Replaces feature encoding: Returns the necessary text prompts/map.
     
     Returns: (ALL_CANDIDATE_PROMPTS, PROMPT_TO_MAIN_CLASS_MAP)
     """
-    # The original function returned two tensors. 
-    # We must maintain this structure, so we return two objects needed for classification.
     if _model_url is None:
-        st.warning("Cannot proceed because the API configuration failed.")
-        # Returning two empty lists to match the tensor structure/failure mode
-        return [], []
+        st.warning("Cannot compute features because the API configuration failed.")
+        # Returns two dummy objects to match the original structure/failure mode
+        return [], {}
     
     print("Caching primary pest/disease text prompts for remote use...")
     # This function now returns the prompts list and the mapping dictionary
@@ -112,18 +101,17 @@ def run_primary_classification(image_batch, api_url, _, prompts, mapping, __):
     """
     Classifies a batch of images by calling the remote Hugging Face API.
     
-    Args:
+    Args: (Matching original signature)
         image_batch (list): List of (filename, PIL.Image) tuples.
         api_url (str): The HUGGINGFACE_API_URL (replaces 'model').
         _ (bool): Replaces 'preprocess', ignored.
         prompts (list): Replaces 'pest_text_features', holds ALL_CANDIDATE_PROMPTS.
         mapping (dict): Replaces 'disease_text_features', holds PROMPT_TO_MAIN_CLASS_MAP.
-        __ (str): Replaces 'device_str', ignored.
+        __ (str): Replaces 'device', ignored.
 
     Returns:
         (list, list): A tuple containing (pest_batch, disease_batch).
     """
-    # The first check from the original logic is maintained but adapted
     if api_url is None or not HF_API_TOKEN:
         st.error("Classification skipped: API configuration or token is missing.")
         return [], []
@@ -138,7 +126,7 @@ def run_primary_classification(image_batch, api_url, _, prompts, mapping, __):
         payload = {
             "inputs": base64_image,
             "parameters": {
-                "candidate_labels": prompts # Use the prompts passed from get_primary_clip_features
+                "candidate_labels": prompts 
             }
         }
 
@@ -149,21 +137,18 @@ def run_primary_classification(image_batch, api_url, _, prompts, mapping, __):
             result = response.json()
             
             if result and isinstance(result, list):
-                # The best match prompt is the first item in the result list
+                # 1. Get the prompt with the highest score
                 best_match_prompt = result[0].get("label")
                 
-                # Map the prompt back to the main class ("pest" or "disease")
+                # 2. Map the best-match prompt back to the main class ("pest" or "disease")
                 main_class = mapping.get(best_match_prompt, "unknown")
 
                 if main_class == "pest":
                     pest_batch.append((filename, pil_image))
                 elif main_class == "disease":
                     disease_batch.append((filename, pil_image))
-                else:
-                    st.warning(f"File **{filename}**: API returned an unmatched prompt: `{best_match_prompt}`")
             else:
                  st.warning(f"File **{filename}**: API returned an invalid response structure.")
-
 
         except requests.exceptions.RequestException as e:
             st.error(f"File **{filename}**: API request failed. Error: {e}")
