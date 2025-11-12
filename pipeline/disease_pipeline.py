@@ -77,26 +77,24 @@ def run_crop_classification(image_batch, model, processor, device, num_clusters=
 
 @st.cache_resource
 def load_clip_classifier():
+    """
+    Loads the secondary CLIP classifier (for health check).
+    FIX: Changed to a remote public ID to ensure it loads in the clean EC2 environment.
+    """
     try:
         from transformers import pipeline
         
-        # FIX: Change to a public Hugging Face model ID 
-        # OR ensure your local model files are present.
+        # Changed from local path ("models/clip-model") to a public HF model ID
+        model_id = "openai/clip-vit-base-patch16" 
         
-        # If you meant to use a generic model:
-        model_id = "openai/clip-vit-base-patch32" # Example public model ID
-        
-        # If your local files are now tracked by LFS:
-        # You need 'git lfs pull' to get the actual files.
-        # Since we are focusing on remote deployment:
-        
-        st.info("Loading secondary CLIP classifier from Hugging Face public repository...")
+        print(f"[INFO] Loading secondary CLIP classifier from {model_id}...")
         classifier = pipeline(task="zero-shot-image-classification", model=model_id)
         return classifier
         
     except Exception as e:
-        st.error(f"Error loading CLIP model from local files: {e}")
+        st.error(f"Error loading CLIP model: {e}")
         return None
+
 
 # --- run_health_classification (omitted for brevity) ---
 def run_health_classification(crop_name, image_group, classifier):
