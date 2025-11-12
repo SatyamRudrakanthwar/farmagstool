@@ -8,50 +8,67 @@ from PIL import Image
 import cv2
 import supervision as sv
 import numpy as np
-from collections import defaultdict
+import boto3      # ADDED: AWS SDK
+import os         # ADDED: For file path handling
+import tempfile   # ADDED: For creating temporary files
+
+# --- S3 CONFIGURATION (MUST BE UPDATED IN DEPLOYMENT ENVIRONMENT) ---
+S3_BUCKET_NAME = "srrudra-agrisavant-models" # YOUR ACTUAL BUCKET NAME
+S3_MODEL_KEY = "models/best.pt" # Key must match the path in your S3 bucket
 
 # PEST DETECTION (BRANCH 1 - PART 1)-
-
-# pipeline/pest_pipeline.py
 
 @st.cache_resource
 def load_pest_model():
     """
-    Loads the YOLO model from disk.
+    Downloads the YOLO model from S3 to a temporary file and loads it.
+    This resolves the PyTorch security error by reading from a clean local path.
     """
-    try:
-        # NOTE: YOLO handles its own torch.load. 
-        # The underlying issue is the PyTorch version incompatibility with how models/best.pt was saved.
-        # The simplest fix is often ensuring the environment is clean, but 
-        # for a robust deployment, we trust the YOLO framework.
-        model = YOLO("models/best.pt") 
-        return model
-    except Exception as e:
-        # If the failure is persistent, the most common fix is to either 
-        # 1. Downgrade PyTorch in the Dockerfile, or 
-        # 2. Re-save the 'best.pt' file using the latest PyTorch on your training machine.
-        st.error(f"Error loading pest model: {e}")
-        return None
+    # 1. Create a secure temporary file path
+    with tempfile.NamedTemporaryFile(suffix=".pt", delete=False) as tmp_file:
+        local_model_path = tmp_file.name
 
-# --- NEW HELPER FUNCTION 1 ---
+    try:
+        st.info(f"Downloading YOLO model from S3...")
+        
+        # 2. Initialize the S3 client (Boto3 uses the attached IAM role automatically)
+        s3 = boto3.client("s3") 
+        
+        # 3. Download the file
+        s3.download_file(S3_BUCKET_NAME, S3_MODEL_KEY, local_model_path)
+        
+        # 4. Load the model from the local temporary file
+        model = YOLO(local_model_path)
+        
+        print(f"[INFO] Pest model loaded successfully from S3 key: {S3_MODEL_KEY}")
+        return model
+        
+    except Exception as e:
+        # Crucial error display for S3/IAM role problems
+        st.error(f"Error loading Pest Model from S3: {e}. Check IAM role, bucket name, and key.")
+        return None
+        
+    finally:
+        # 5. Clean up the temporary file path immediately
+        if os.path.exists(local_model_path):
+            os.remove(local_model_path)
+
+
+# --- NEW HELPER FUNCTION 1 (remains unchanged) ---
 def get_pests_from_results(results):
     """
     Extracts a list of detected pest class names from YOLO results.
     """
-    # Get the class name map (e.g., {0: 'aphid', 1: 'thrip'})
     class_names = results[0].names 
-    
-    # Get the detected class indices as a numpy array
     detected_classes = results[0].boxes.cls.cpu().numpy() 
     
     pests_found = []
     for cls_id in detected_classes:
         pests_found.append(class_names[int(cls_id)])
     
-    # Returns a list like ['aphid', 'aphid', 'thrip']
     return pests_found 
 
-# --- NEW HELPER FUNCTION 2 ---
+# --- NEW HELPER FUNCTION 2 (remains unchanged) ---
 def draw_boxes(pil_image, results):
     """
     Draws bounding boxes on an image using Supervision.
@@ -73,10 +90,8 @@ def draw_boxes(pil_image, results):
     )
 
     # 4. Create labels for the detections
-    # FIX: Correctly access detections attributes for labels
     class_names = results[0].names
     labels = [
-        # Detections object attributes are accessed directly, not unpacked as a tuple
         f"{class_names[class_id]} {confidence:0.2f}"
         for confidence, class_id in zip(detections.confidence, detections.class_id)
     ]
@@ -103,7 +118,6 @@ def run_pest_detection_batch(image_batch_with_names, pest_model):
     total_pest_counts = {} 
     images_by_pest = defaultdict(list)
     
-    # Cache to store annotated images (so we only draw boxes on each image once)
     annotated_image_cache = {}
 
     for filename, pil_image in image_batch_with_names:
@@ -118,7 +132,6 @@ def run_pest_detection_batch(image_batch_with_names, pest_model):
         # --- END OF FIX ---
 
         # 1. Run detection on the 3-channel image
-        # Note: If running on CPU, model() will convert PIL to tensor internally.
         results = pest_model(pil_rgb) 
         
         pests_found_in_image = get_pests_from_results(results) 
@@ -134,8 +147,7 @@ def run_pest_detection_batch(image_batch_with_names, pest_model):
         if filename in annotated_image_cache:
             annotated_cv2_img = annotated_image_cache[filename]
         else:
-            # Pass the 3-channel (on-white) image to be drawn on
-            annotated_cv2_img = draw_boxes(pil_rgb, results) # Call draw_boxes with the 3-channel image
+            annotated_cv2_img = draw_boxes(pil_rgb, results)
             annotated_image_cache[filename] = annotated_cv2_img
         
         # 4. Add this one image to the list for each *unique* pest found
@@ -145,8 +157,7 @@ def run_pest_detection_batch(image_batch_with_names, pest_model):
     return total_pest_counts, images_by_pest
 
 # ETL CALCULATION (BRANCH 1 - PART 2)
-# ... (All ETL functions: calculate_value_loss, predict_etl_days, 
-# run_etl_calculation, and run_pest_pipeline_by_crop remain unchanged) ...
+# ... (All ETL and pipeline functions remain unchanged) ...
 
 def calculate_value_loss(I, market_cost_per_kg):
     """Helper function for ETL calculation."""
@@ -156,13 +167,11 @@ def calculate_value_loss(I, market_cost_per_kg):
 def predict_etl_days(data):
     """
     Core ETL prediction engine.
-    (This is your original function, unchanged)
     """
     etl_days_list = []
     full_progress_data = []
 
     for row in data:
-        # This function expects a very specific row structure
         pest_name, N_current, I_old, _, C, market_cost_per_kg, _, _, fev_con = row
         days = 0
         while days <= 28:
