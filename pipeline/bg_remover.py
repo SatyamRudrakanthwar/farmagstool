@@ -25,8 +25,7 @@ CONFIG = {
 
 #
 # --- (Your provided functions: segment_healthy_leaf, segment_pale_leaf, ---
-# ---  exclude_sky, _fill_holes, remove_background_hybrid) ---
-# --- (Pasting them here without any changes) ---
+# ---  exclude_sky, _fill_holes, remove_background_hybrid remain unchanged) ---
 #
 
 def segment_healthy_leaf(img):
@@ -174,6 +173,7 @@ def remove_background_hybrid(img):
         mask_orig = cv2.GaussianBlur(mask_orig, (blur_amount, blur_amount), 0)
         
     b, g, r = cv2.split(img)
+    # The output is [B, G, R, Alpha] in BGR order
     rgba = cv2.merge([b, g, r, mask_orig])
     erased_pixels = np.sum(mask_orig == 0)
     data_erased_pct = 100 * erased_pixels / (orig_h * orig_w)
@@ -183,7 +183,7 @@ def remove_background_hybrid(img):
 
 
 # -----------------------------------------------------------------
-# --- NEW WRAPPER FUNCTION ---
+# --- CORRECTED WRAPPER FUNCTION ---
 # -----------------------------------------------------------------
 def remove_bg_from_pil_and_get_bgr(pil_image: Image.Image) -> np.ndarray:
     """
@@ -191,34 +191,44 @@ def remove_bg_from_pil_and_get_bgr(pil_image: Image.Image) -> np.ndarray:
     Takes a PIL (RGB) image, runs BG removal, and returns a 3-channel
     BGR image (on a white background) ready for color analysis.
     """
-    # 1. Convert PIL (RGB) to BGR for processing
-    bgr_image = cv2.cvtColor(np.array(pil_image), cv2.COLOR_RGB2BGR)
+    # 1. Convert PIL (RGB) to BGR for processing (This is correct)
+    bgr_image_orig = cv2.cvtColor(np.array(pil_image), cv2.COLOR_RGB2BGR)
 
     try:
         # 2. Run your hybrid background removal
-        rgba, result, _, _ = remove_background_hybrid(bgr_image)
+        # Output is 4-channel BGRA (B, G, R, Alpha)
+        rgba, result, _, _ = remove_background_hybrid(bgr_image_orig)
 
         if result != "Success" or rgba is None:
             # If BG removal fails, return the original BGR image
-            return bgr_image
+            return bgr_image_orig
 
-        # 3. Convert 4-channel RGBA to 3-channel BGR
-        # Create a white background
-        bg = np.full((rgba.shape[0], rgba.shape[1], 3), 255, dtype=np.uint8)
+        # 3. Convert 4-channel BGR-Alpha to 3-channel BGR (on white background)
         
-        # Get the alpha mask and convert to 3 channels
-        alpha = rgba[:, :, 3] / 255.0
-        alpha_mask = cv2.merge([alpha, alpha, alpha])
+        # Split the BGRA array
+        b, g, r, alpha = cv2.split(rgba)
         
-        # Get the RGB channels
-        rgb = rgba[:, :, :3]
+        # Convert alpha channel to float [0.0, 1.0]
+        alpha_float = alpha.astype(np.float32) / 255.0
         
-        # Alpha-blend the foreground (rgb) onto the background (bg)
-        blended_bgr = (rgb * alpha_mask + bg * (1 - alpha_mask)).astype(np.uint8)
+        # Create a white background float array (3 channels)
+        bg_float = np.full(b.shape, 255.0, dtype=np.float32)
+        bg_float_3ch = cv2.merge([bg_float, bg_float, bg_float]) # White BGR background
         
+        # Stack the foreground channels (B, G, R) and background channels
+        fg_float_3ch = cv2.merge([b, g, r]).astype(np.float32)
+        
+        # Alpha-blend the foreground onto the background
+        # Formula: fg * alpha + bg * (1 - alpha)
+        # alpha_mask needs to be 3 channels for element-wise multiplication
+        alpha_mask_3ch = cv2.merge([alpha_float, alpha_float, alpha_float])
+        
+        blended_bgr = (fg_float_3ch * alpha_mask_3ch + bg_float_3ch * (1.0 - alpha_mask_3ch)).astype(np.uint8)
+        
+        # Note: blended_bgr is correctly BGR
         return blended_bgr
 
     except Exception as e:
         print(f"Warning: BG removal failed with error: {e}. Returning original image.")
         # If any other error occurs, return the original
-        return bgr_image
+        return bgr_image_orig
