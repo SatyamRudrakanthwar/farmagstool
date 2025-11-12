@@ -24,3 +24,4 @@ scikit-image==0.22.0
 # --- Dependencies for Remote API (HTTP requests) ---
 requests
 huggingface-hub
+boto3
