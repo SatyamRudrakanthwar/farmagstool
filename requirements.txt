@@ -1,17 +1,17 @@
-streamlit
-pandas
-plotly
-plotly-express
-torch
-tqdm
-torchvision
-torchaudio
-ultralytics
-opencv-python-headless
-Pillow
-scikit-learn
-matplotlib
-transformers
-clip-openai
-supervision
-numpy
+# Core App & ML
+streamlit==1.33.0
+pandas==2.2.1
+plotly==5.18.0
+ultralytics==8.1.0
+opencv-python-headless==4.9.0.80
+pillow==10.2.0
+scikit-learn==1.4.1.post1
+matplotlib==3.8.3
+transformers==4.38.2
+supervision==0.18.0
+numpy==1.26.4
+scikit-image==0.19.3
+
+# --- NEW/UPDATED DEPENDENCIES FOR REMOTE API ---
+requests
+huggingface-hub
