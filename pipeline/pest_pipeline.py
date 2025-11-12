@@ -55,7 +55,6 @@ def draw_boxes(pil_image, results):
     detections = sv.Detections.from_ultralytics(results[0])
     
     # 3. Create annotators
-    # 3. Create annotators
     box_annotator = sv.BoxAnnotator(
         thickness=2
     )
@@ -66,12 +65,12 @@ def draw_boxes(pil_image, results):
     )
 
     # 4. Create labels for the detections
-    # 4. Create labels for the detections
+    # FIX: Correctly access detections attributes for labels
     class_names = results[0].names
     labels = [
+        # Detections object attributes are accessed directly, not unpacked as a tuple
         f"{class_names[class_id]} {confidence:0.2f}"
-        # (xyxy, mask, confidence, class_id, tracker_id, data)
-        for _, _, confidence, class_id, _, _ in detections # <-- THIS IS THE FIX
+        for confidence, class_id in zip(detections.confidence, detections.class_id)
     ]
     
     # 5. Annotate the image
@@ -93,34 +92,27 @@ def run_pest_detection_batch(image_batch_with_names, pest_model):
     """
     Runs pest detection and returns counts AND a dictionary of images grouped by pest.
     """
-    total_pest_counts = {}       # e.g., {'aphid': 5, 'thrip': 2}
-    images_by_pest = defaultdict(list) # e.g., {'aphid': [('img1', img1_annotated), ...]}
+    total_pest_counts = {} 
+    images_by_pest = defaultdict(list)
     
     # Cache to store annotated images (so we only draw boxes on each image once)
     annotated_image_cache = {}
 
     for filename, pil_image in image_batch_with_names:
         
-        # --- THIS IS THE FIX ---
-        # Create a 3-channel RGB image on a white background if it's RGBA
+        # --- FIX: Ensure pil_rgb is created properly if RGBA ---
         if pil_image.mode == "RGBA":
-            # Create a new white background image
             white_bg = Image.new("RGB", pil_image.size, (255, 255, 255))
-            # Paste the RGBA image onto the white background, using the alpha channel
             white_bg.paste(pil_image, (0, 0), pil_image)
             pil_rgb = white_bg
         else:
-            # It's already RGB (or some other mode), just convert
             pil_rgb = pil_image.convert("RGB")
         # --- END OF FIX ---
 
-        # 'pil_rgb' is now guaranteed to be a 3-channel RGB image
-        # (composited on white if it was transparent)
-        
         # 1. Run detection on the 3-channel image
+        # Note: If running on CPU, model() will convert PIL to tensor internally.
         results = pest_model(pil_rgb) 
         
-        # This helper should return a list of all pests found, e.g., ['aphid', 'aphid', 'thrip']
         pests_found_in_image = get_pests_from_results(results) 
 
         if not pests_found_in_image:
@@ -131,23 +123,22 @@ def run_pest_detection_batch(image_batch_with_names, pest_model):
             total_pest_counts[pest] = total_pest_counts.get(pest, 0) + 1
         
         # 3. Get the single annotated image
-        # Check cache first
         if filename in annotated_image_cache:
             annotated_cv2_img = annotated_image_cache[filename]
         else:
-            # If not in cache, create, store, and use
             # Pass the 3-channel (on-white) image to be drawn on
-            annotated_cv2_img = draw_boxes(pil_rgb, results)
+            annotated_cv2_img = draw_boxes(pil_rgb, results) # Call draw_boxes with the 3-channel image
             annotated_image_cache[filename] = annotated_cv2_img
         
         # 4. Add this one image to the list for each *unique* pest found
         for pest_name in set(pests_found_in_image):
             images_by_pest[pest_name].append((filename, annotated_cv2_img))
     
-    # Return the counts and the new dictionary
     return total_pest_counts, images_by_pest
 
 # ETL CALCULATION (BRANCH 1 - PART 2)
+# ... (All ETL functions: calculate_value_loss, predict_etl_days, 
+# run_etl_calculation, and run_pest_pipeline_by_crop remain unchanged) ...
 
 def calculate_value_loss(I, market_cost_per_kg):
     """Helper function for ETL calculation."""
@@ -219,12 +210,6 @@ def predict_etl_days(data):
 def run_etl_calculation(etl_input_data: list):
     """
     Runs the full ETL workflow.
-    Instead of printing to Streamlit, it returns the objects for app.py to display.
-    
-    Args:
-        etl_input_data (list): A list of tuples, where each tuple contains
-                               the required data for predict_etl_days.
-                               e.g., [(pest, N, I, ...), (pest2, N2, I2, ...)]
     """
     
     # 1. Get the raw dataframes from the prediction engine
@@ -250,17 +235,10 @@ def run_etl_calculation(etl_input_data: list):
 
     # 3. Return the three objects for app.py to display
     return df_etl, df_progress, fig
+    
 def run_pest_pipeline_by_crop(crop_groups, pest_model):
     """
     Runs pest detection for each crop group.
-    
-    Args:
-        crop_groups (dict): A dictionary from run_crop_classification, e.g.,
-                            {'Crop 1': [('img1.jpg', img1_pil), ...]}
-        pest_model: The loaded YOLO pest model.
-
-    Returns:
-        A tuple: (pest_results_by_crop, total_pest_counts_all_crops)
     """
     try:
         pest_results_by_crop = {}
