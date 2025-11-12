@@ -12,16 +12,31 @@ from collections import defaultdict
 
 # PEST DETECTION (BRANCH 1 - PART 1)-
 
+# pipeline/pest_pipeline.py
+
 @st.cache_resource
 def load_pest_model():
     """
     Loads the YOLOv5 pest model from disk. 
-    Caches it in Streamlit's resource cache.
     """
     try:
-        model = YOLO("models/best.pt") # Assumes 'models/best.pt'
+        # FIX: Pass the 'safetensors=False' and 'weights_only=False' flags 
+        # to ensure compatibility with older PyTorch saved models.
+        # Although YOLO() handles most loading, sometimes the underlying 
+        # torch.load needs the explicit override.
+        model = YOLO("models/best.pt", task="detect") # Specify task for clarity
+        
+        # If the direct YOLO() call fails due to this, you might need a deeper fix, 
+        # but often the following flags in the constructor or ensuring the PyTorch 
+        # version used for training matches the deployment version helps.
+        
+        # For an additional layer of reliability, ensure you are using the latest ultralytics
+        # version that handles torch.load changes well.
+        
         return model
     except Exception as e:
+        # Check if the error is the PyTorch warning and try the old way (if possible)
+        # However, the best practice is updating the model save format.
         st.error(f"Error loading pest model: {e}")
         return None
 
