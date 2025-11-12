@@ -98,29 +98,23 @@ def run_crop_classification(image_batch, model, processor, device, num_clusters=
 @st.cache_resource
 def load_clip_classifier():
     """
-    Downloads the entire clip-model folder from S3 and loads the model pipeline.
+    Loads the secondary CLIP classifier (for health check) from Hugging Face Hub.
+    This resolves the 'models/clip-model is not a local folder' error.
     """
-    # 1. Create a secure, temporary local directory
-    temp_dir = tempfile.mkdtemp()
-
     try:
-        st.info("Downloading secondary CLIP model folder from S3...")
+        from transformers import pipeline
         
-        # 2. Download the entire folder structure recursively
-        local_path = download_s3_folder(S3_BUCKET_NAME, S3_CLIP_MODEL_KEY, temp_dir)
+        # This replaces the failing local path ("models/clip-model")
+        # and bypasses the complex S3 folder download.
+        model_id = "openai/clip-vit-base-patch16" 
         
-        # 3. Load the model pipeline from the temporary local path
-        # The 'pipeline' function will find config.json, etc., in this folder.
-        classifier = pipeline(task="zero-shot-image-classification", model=local_path)
-        
-        print(f"[INFO] Secondary CLIP model loaded successfully from S3 folder.")
+        print(f"[INFO] Loading secondary CLIP classifier from {model_id}...")
+        classifier = pipeline(task="zero-shot-image-classification", model=model_id)
         return classifier
         
-    except FileNotFoundError as fnf_e:
-        st.error(f"S3 File Error: The path '{S3_CLIP_MODEL_KEY}' might be incorrect or the folder is empty.")
-        return None
     except Exception as e:
-        st.error(f"Error loading Secondary CLIP Model from S3: {e}. Check IAM/Bucket Key.")
+        # This handles general download/installation errors
+        st.error(f"Error loading secondary CLIP model: {e}")
         return None
         
     finally:
