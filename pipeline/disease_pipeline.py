@@ -77,14 +77,10 @@ def run_crop_classification(image_batch, model, processor, device, num_clusters=
 
 @st.cache_resource
 def load_clip_classifier():
-    """
-    Loads the secondary CLIP classifier (for health check).
-    FIX: Changed to a remote public ID to ensure it loads in the clean EC2 environment.
-    """
     try:
         from transformers import pipeline
         
-        # Changed from local path ("models/clip-model") to a public HF model ID
+        # This MUST be a public Hugging Face model ID, NOT a local path!
         model_id = "openai/clip-vit-base-patch16" 
         
         print(f"[INFO] Loading secondary CLIP classifier from {model_id}...")
@@ -92,9 +88,9 @@ def load_clip_classifier():
         return classifier
         
     except Exception as e:
-        st.error(f"Error loading CLIP model: {e}")
+        # If this model load fails, the error will be caught here.
+        st.error(f"Error loading secondary CLIP model: {e}")
         return None
-
 
 # --- run_health_classification (omitted for brevity) ---
 def run_health_classification(crop_name, image_group, classifier):
