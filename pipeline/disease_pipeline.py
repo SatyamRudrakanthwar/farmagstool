@@ -2,51 +2,71 @@ import streamlit as st
 from PIL import Image
 import numpy as np
 import cv2
-from transformers import AutoImageProcessor, AutoModel, pipeline # Added pipeline import here
+from transformers import AutoImageProcessor, AutoModel, pipeline # Ensure 'pipeline' is imported
 from sklearn.cluster import KMeans
 from collections import defaultdict
 import torch
+import boto3      # ADDED: For S3 access
+import os
+import tempfile   # ADDED: For creating temporary directories
+import shutil     # ADDED: For copying/moving directories
 
-# --- Import your new BG remover function (Placeholder/Safety) ---
-try:
-    from pipeline.bg_remover import remove_bg_from_pil_and_get_bgr
-except ImportError:
-    st.error("Could not import bg_remover.py.")
-    def remove_bg_from_pil_and_get_bgr(pil_image):
-        return cv2.cvtColor(np.array(pil_image), cv2.COLOR_RGB2BGR)
+# --- S3 CONFIGURATION ---
+S3_BUCKET_NAME = "srrudra-agrisavant-models" 
+# Key must point to the FOLDER containing the CLIP model files (e.g., config.json, pytorch_model.bin)
+S3_CLIP_MODEL_KEY = "models/clip-model" 
 
-# --- Import your new color analysis function (Placeholder/Safety) ---
-try:
-    from pipeline.color_analysis import run_batch_color_analysis, generate_individual_color_graph
-except ImportError:
-    st.error("Could not import color_analysis.py.")
-    def run_batch_color_analysis(image_group):
-        palette = np.zeros((256, 512, 3), dtype=np.uint8)
-        cv2.putText(palette, "Batch Color Analysis Failed", (30, 128), cv2.FONT_HERSHEY_SIMPLEX, 1, (255, 0, 0), 2)
-        return cv2.cvtColor(palette, cv2.COLOR_BGR2RGB)
-    def generate_individual_color_graph(image_bgr):
-        palette = np.zeros((256, 512, 3), dtype=np.uint8)
-        cv2.putText(palette, "Individual Color Analysis Failed", (30, 128), cv2.FONT_HERSHEY_SIMPLEX, 1, (255, 0, 0), 2)
-        return cv2.cvtColor(palette, cv2.COLOR_BGR2RGB)
+# --- S3 Helper Function: Recursive Download ---
+def download_s3_folder(bucket_name, s3_folder, local_dir):
+    """Downloads all files from an S3 folder (prefix) to a local directory."""
+    s3 = boto3.client('s3')
+    bucket = bucket_name
+    prefix = s3_folder.rstrip('/') + '/'
+    
+    # 1. Ensure the local directory exists
+    if not os.path.exists(local_dir):
+        os.makedirs(local_dir)
+        
+    # 2. List objects with the specified prefix
+    objects = s3.list_objects_v2(Bucket=bucket, Prefix=prefix)
+    
+    if 'Contents' not in objects:
+        raise FileNotFoundError(f"No objects found in s3://{bucket}/{prefix}")
+
+    # 3. Download each file
+    for obj in objects['Contents']:
+        # Construct the local file path
+        # Removes the S3 folder prefix to maintain the local folder structure
+        relative_path = obj['Key'][len(prefix):]
+        if not relative_path: # Skip the folder itself if listed
+            continue
+            
+        local_file_path = os.path.join(local_dir, relative_path)
+        
+        # Create any necessary subdirectories locally
+        os.makedirs(os.path.dirname(local_file_path), exist_ok=True)
+        
+        s3.download_file(bucket, obj['Key'], local_file_path)
+    return local_dir
 
 
-# --- load_dino_model (Unchanged) ---
+# --- load_dino_model and run_crop_classification remain unchanged ---
 @st.cache_resource
 def load_dino_model():
+    # ... (DINO model loading logic) ...
     try:
         processor = AutoImageProcessor.from_pretrained("facebook/dinov2-small")
         model = AutoModel.from_pretrained("facebook/dinov2-small")
         device = "cuda" if torch.cuda.is_available() else "cpu"
         model.to(device)
         print(f"[INFO] Loading DINOv2 (facebook/dinov2-small) on {device}...")
-        print("[INFO] DINOv2 model loaded successfully.")
         return model, processor, device
     except Exception as e:
         print(f"Error loading DINOv2 model: {e}")
         return None, None, None
 
-# --- run_crop_classification (Unchanged) ---
 def run_crop_classification(image_batch, model, processor, device, num_clusters=3):
+    # ... (Crop classification logic) ...
     if not image_batch or model is None or processor is None: return {}
     features = []
     with torch.no_grad():
@@ -55,7 +75,7 @@ def run_crop_classification(image_batch, model, processor, device, num_clusters=
             outputs = model(**inputs)
             feature = outputs.last_hidden_state.mean(dim=1).squeeze().cpu().numpy()
             features.append(feature)
-    if not features: return {}
+    # ... (KMeans clustering and grouping logic) ...
     features_array = np.array(features)
     if len(features_array) < num_clusters:
         final_groups = {"Crop 1": image_batch}
@@ -71,32 +91,46 @@ def run_crop_classification(image_batch, model, processor, device, num_clusters=
     for i in range(num_clusters):
         key_name = f"Crop {i + 1}"
         final_groups[key_name] = crop_groups_by_label.get(i, [])
-    print(f"KMeans Crop Results: " + ", ".join([f"C{i+1}={len(final_groups[f'Crop {i+1}'])}" for i in range(num_clusters)]))
     return final_groups
 
-# --- load_clip_classifier (FIXED: Uses Remote ID) ---
+
+# --- load_clip_classifier (FIXED: Loads from S3) ---
 @st.cache_resource
 def load_clip_classifier():
     """
-    Loads the secondary CLIP classifier (for health check).
-    FIX: Uses a public remote ID to prevent local file errors.
+    Downloads the entire clip-model folder from S3 and loads the model pipeline.
     """
+    # 1. Create a secure, temporary local directory
+    temp_dir = tempfile.mkdtemp()
+
     try:
-        from transformers import pipeline
+        st.info("Downloading secondary CLIP model folder from S3...")
         
-        # This replaces the failing local path ("models/clip-model")
-        model_id = "openai/clip-vit-base-patch16" 
+        # 2. Download the entire folder structure recursively
+        local_path = download_s3_folder(S3_BUCKET_NAME, S3_CLIP_MODEL_KEY, temp_dir)
         
-        print(f"[INFO] Loading secondary CLIP classifier from {model_id}...")
-        classifier = pipeline(task="zero-shot-image-classification", model=model_id)
+        # 3. Load the model pipeline from the temporary local path
+        # The 'pipeline' function will find config.json, etc., in this folder.
+        classifier = pipeline(task="zero-shot-image-classification", model=local_path)
+        
+        print(f"[INFO] Secondary CLIP model loaded successfully from S3 folder.")
         return classifier
         
-    except Exception as e:
-        # If this model load fails, the error will be caught here.
-        st.error(f"Error loading secondary CLIP model: {e}")
+    except FileNotFoundError as fnf_e:
+        st.error(f"S3 File Error: The path '{S3_CLIP_MODEL_KEY}' might be incorrect or the folder is empty.")
         return None
+    except Exception as e:
+        st.error(f"Error loading Secondary CLIP Model from S3: {e}. Check IAM/Bucket Key.")
+        return None
+        
+    finally:
+        # 4. Clean up the entire temporary directory structure
+        if os.path.exists(temp_dir):
+            shutil.rmtree(temp_dir)
 
-# --- run_health_classification (Unchanged) ---
+
+# --- run_health_classification, run_disease_classification, and run_disease_pipeline_by_crop remain unchanged ---
+
 def run_health_classification(crop_name, image_group, classifier):
     if not image_group or classifier is None: return {"healthy": [], "unhealthy": []}
     candidate_labels = ["healthy leaf", "unhealthy leaf with disease, spots, or pests"]
@@ -111,7 +145,6 @@ def run_health_classification(crop_name, image_group, classifier):
             health_results["unhealthy"].append(image_group[i])
     return health_results
 
-# --- run_disease_classification (Unchanged) ---
 def run_disease_classification(crop_name, unhealthy_images, model, processor, device, num_clusters=3):
     if not unhealthy_images or model is None or processor is None: return {}
     features = []
@@ -142,9 +175,7 @@ def run_disease_classification(crop_name, unhealthy_images, model, processor, de
 
 
 def run_disease_pipeline_by_crop(crop_groups, dino_model, dino_processor, dino_device, clip_classifier, global_bg_removed: bool = False):
-    """
-    Runs the full pipeline, processing healthy and unhealthy images and generating data structures.
-    """
+    # ... (rest of the run_disease_pipeline_by_crop function remains unchanged) ...
     RESIZE_DIM = (600, 600)
     
     try:
@@ -177,42 +208,28 @@ def run_disease_pipeline_by_crop(crop_groups, dino_model, dino_processor, dino_d
                     
                     # --- FIX: Block 1 (Healthy Images) - Robust Blending ---
                     if global_bg_removed:
-                        # 1. Convert PIL RGBA to 4-channel numpy array
                         rgba_np = np.array(img_pil.convert("RGBA"))
-                        
-                        # 2. Get the alpha mask (Convert to float32)
                         alpha = (rgba_np[:, :, 3] / 255.0).astype(np.float32) 
-                        
-                        # 3. Extract RGB channels and convert to float32 BGR
                         bgr_float = cv2.cvtColor(rgba_np[:, :, :3], cv2.COLOR_RGB2BGR).astype(np.float32) 
-                        
-                        # 4. Create white background (float32) and alpha mask (3 channels)
                         bg_float = np.full(bgr_float.shape, 255.0, dtype=np.float32)
                         alpha_mask_3ch = cv2.merge([alpha, alpha, alpha])
-                        
-                        # 5. Blend: result = (image * alpha) + (background * (1 - alpha))
                         bgr_img = (bgr_float * alpha_mask_3ch + bg_float * (1.0 - alpha_mask_3ch)).astype(np.uint8)
                     else:
-                        # Not yet removed. Run the internal remover
                         bgr_img = remove_bg_from_pil_and_get_bgr(img_pil)
 
                     all_healthy_bg_removed_bgr.append((fname, bgr_img))
                     
-                    # 2b. Get individual color graph
                     individual_palette = generate_individual_color_graph(bgr_img)
                     
-                    # 2c. Store all data for this image
                     healthy_image_data.append({
                         "fname": fname, "original": img_pil, "bg_removed": bgr_img, "individual_palette": individual_palette
                     })
                 
-                # 2d. Run batch color analysis on ALL bg-removed images
                 healthy_aggregated_palette = run_batch_color_analysis(all_healthy_bg_removed_bgr)
 
             # 3. Process UNHEALTHY images
             disease_groups_with_palettes = {}
             if unhealthy_images:
-                # Calls the new KMeans-based function.
                 disease_groups_raw = run_disease_classification(
                     crop_name, unhealthy_images, dino_model, dino_processor, dino_device
                 )
@@ -225,54 +242,37 @@ def run_disease_pipeline_by_crop(crop_groups, dino_model, dino_processor, dino_d
                     if disease_image_group:
                         for fname, img_pil in disease_image_group:
                             
-                            # Resizing Check (Block 2)
                             if img_pil.size[0] > RESIZE_DIM[0] or img_pil.size[1] > RESIZE_DIM[1]:
                                 img_pil = img_pil.resize(RESIZE_DIM, Image.Resampling.LANCZOS)
                             
                             # --- FIX: Block 2 (Disease Images) - Robust Blending ---
                             if global_bg_removed:
-                                # 1. Convert PIL RGBA to 4-channel numpy array
                                 rgba_np = np.array(img_pil.convert("RGBA"))
-                                
-                                # 2. Get the alpha mask (Convert to float32)
                                 alpha = (rgba_np[:, :, 3] / 255.0).astype(np.float32)
-                                
-                                # 3. Extract RGB channels and convert to float32 BGR
                                 bgr_float = cv2.cvtColor(rgba_np[:, :, :3], cv2.COLOR_RGB2BGR).astype(np.float32)
-                                
-                                # 4. Create white background (float32) and alpha mask (3 channels)
                                 bg_float = np.full(bgr_float.shape, 255.0, dtype=np.float32)
                                 alpha_mask_3ch = cv2.merge([alpha, alpha, alpha])
-                                
-                                # 5. Blend: result = (image * alpha) + (background * (1 - alpha))
                                 bgr_img = (bgr_float * alpha_mask_3ch + bg_float * (1.0 - alpha_mask_3ch)).astype(np.uint8)
                             else:
-                                # Not yet removed. Run the internal remover
                                 bgr_img = remove_bg_from_pil_and_get_bgr(img_pil)
 
                             all_disease_bg_removed_bgr.append((fname, bgr_img))
                             
-                            # 3b. Get individual color graph
                             individual_palette = generate_individual_color_graph(bgr_img)
                             
-                            # 3c. Store all data for this image
                             image_data_list.append({
                                 "fname": fname, "original": img_pil, "bg_removed": bgr_img, "individual_palette": individual_palette
                             })
                         
-                        # 3d. Run batch color analysis
                         aggregated_palette = run_batch_color_analysis(all_disease_bg_removed_bgr)
                     
-                    # Store as a tuple: (list_of_image_data_dicts, aggregated_palette_image)
                     disease_groups_with_palettes[disease_name] = (image_data_list, aggregated_palette)
             
-            # 4. Store all results
             final_sorting_results[crop_name] = {
                 "healthy": (healthy_image_data, healthy_aggregated_palette),
                 "unhealthy_by_disease": disease_groups_with_palettes
             }
         return final_sorting_results
     except Exception as e:
-        # Return the error in the format expected by the caller if possible
         print(f"Error in Disease Pipeline: {e}")
         return None, f"Error in Disease Pipeline: {e}"
