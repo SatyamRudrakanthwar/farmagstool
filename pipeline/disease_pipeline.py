@@ -2,12 +2,12 @@ import streamlit as st
 from PIL import Image
 import numpy as np
 import cv2
-from transformers import AutoImageProcessor, AutoModel
+from transformers import AutoImageProcessor, AutoModel, pipeline # Added pipeline import here
 from sklearn.cluster import KMeans
 from collections import defaultdict
 import torch
 
-# --- Import your new BG remover function (omitted for brevity) ---
+# --- Import your new BG remover function (Placeholder/Safety) ---
 try:
     from pipeline.bg_remover import remove_bg_from_pil_and_get_bgr
 except ImportError:
@@ -15,7 +15,7 @@ except ImportError:
     def remove_bg_from_pil_and_get_bgr(pil_image):
         return cv2.cvtColor(np.array(pil_image), cv2.COLOR_RGB2BGR)
 
-# --- Import your new color analysis function (omitted for brevity) ---
+# --- Import your new color analysis function (Placeholder/Safety) ---
 try:
     from pipeline.color_analysis import run_batch_color_analysis, generate_individual_color_graph
 except ImportError:
@@ -30,6 +30,7 @@ except ImportError:
         return cv2.cvtColor(palette, cv2.COLOR_BGR2RGB)
 
 
+# --- load_dino_model (Unchanged) ---
 @st.cache_resource
 def load_dino_model():
     try:
@@ -44,7 +45,7 @@ def load_dino_model():
         print(f"Error loading DINOv2 model: {e}")
         return None, None, None
 
-# --- run_crop_classification (omitted for brevity) ---
+# --- run_crop_classification (Unchanged) ---
 def run_crop_classification(image_batch, model, processor, device, num_clusters=3):
     if not image_batch or model is None or processor is None: return {}
     features = []
@@ -73,14 +74,17 @@ def run_crop_classification(image_batch, model, processor, device, num_clusters=
     print(f"KMeans Crop Results: " + ", ".join([f"C{i+1}={len(final_groups[f'Crop {i+1}'])}" for i in range(num_clusters)]))
     return final_groups
 
-# --- load_clip_classifier (omitted for brevity) ---
-
+# --- load_clip_classifier (FIXED: Uses Remote ID) ---
 @st.cache_resource
 def load_clip_classifier():
+    """
+    Loads the secondary CLIP classifier (for health check).
+    FIX: Uses a public remote ID to prevent local file errors.
+    """
     try:
         from transformers import pipeline
         
-        # This MUST be a public Hugging Face model ID, NOT a local path!
+        # This replaces the failing local path ("models/clip-model")
         model_id = "openai/clip-vit-base-patch16" 
         
         print(f"[INFO] Loading secondary CLIP classifier from {model_id}...")
@@ -92,7 +96,7 @@ def load_clip_classifier():
         st.error(f"Error loading secondary CLIP model: {e}")
         return None
 
-# --- run_health_classification (omitted for brevity) ---
+# --- run_health_classification (Unchanged) ---
 def run_health_classification(crop_name, image_group, classifier):
     if not image_group or classifier is None: return {"healthy": [], "unhealthy": []}
     candidate_labels = ["healthy leaf", "unhealthy leaf with disease, spots, or pests"]
@@ -107,7 +111,7 @@ def run_health_classification(crop_name, image_group, classifier):
             health_results["unhealthy"].append(image_group[i])
     return health_results
 
-# --- run_disease_classification (omitted for brevity) ---
+# --- run_disease_classification (Unchanged) ---
 def run_disease_classification(crop_name, unhealthy_images, model, processor, device, num_clusters=3):
     if not unhealthy_images or model is None or processor is None: return {}
     features = []
