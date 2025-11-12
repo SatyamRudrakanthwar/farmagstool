@@ -1,7 +1,21 @@
-models/clip-model/ 
-*.bin 
-*.pt 
-*.zip 
-*.jpg 
-*.png 
-.env
+# ----------------------------------------------------------------------
+# Local Environment and System Files
+# ----------------------------------------------------------------------
+.env                     # Contains sensitive API keys and secrets (e.g., HF_API_TOKEN)
+venv/                    # Python virtual environment folder
+
+# ----------------------------------------------------------------------
+# Large Model Files (Do not commit to Git)
+# ----------------------------------------------------------------------
+# Exclude model weights, as these are large binary files.
+*.bin                    # General binary model files (e.g., from Hugging Face Transformers)
+*.pt                     # PyTorch model state files (e.g., YOLO weights)
+*.zip                    # Compressed archives (often used for models/data)
+models/clip-model/       # Excludes the contents of your local CLIP model directory
+
+# ----------------------------------------------------------------------
+# Image and Data Files (Avoid unnecessary large files)
+# ----------------------------------------------------------------------
+*.jpg                    # Exclude large JPG images
+*.png                    # Exclude large PNG images
+streamlit.log            # Logs created by nohup command during EC2 deployment
