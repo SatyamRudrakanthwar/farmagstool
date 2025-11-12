@@ -8,67 +8,42 @@ from PIL import Image
 import cv2
 import supervision as sv
 import numpy as np
-import boto3      # ADDED: AWS SDK
-import os         # ADDED: For file path handling
-import tempfile   # ADDED: For creating temporary files
-
-# --- S3 CONFIGURATION (MUST BE UPDATED IN DEPLOYMENT ENVIRONMENT) ---
-S3_BUCKET_NAME = "srrudra-agrisavant-models" # YOUR ACTUAL BUCKET NAME
-S3_MODEL_KEY = "models/best.pt" # Key must match the path in your S3 bucket
+from collections import defaultdict
 
 # PEST DETECTION (BRANCH 1 - PART 1)-
 
 @st.cache_resource
 def load_pest_model():
     """
-    Downloads the YOLO model from S3 to a temporary file and loads it.
-    This resolves the PyTorch security error by reading from a clean local path.
+    Loads the YOLOv5 pest model from disk. 
+    Caches it in Streamlit's resource cache.
     """
-    # 1. Create a secure temporary file path
-    with tempfile.NamedTemporaryFile(suffix=".pt", delete=False) as tmp_file:
-        local_model_path = tmp_file.name
-
     try:
-        st.info(f"Downloading YOLO model from S3...")
-        
-        # 2. Initialize the S3 client (Boto3 uses the attached IAM role automatically)
-        s3 = boto3.client("s3") 
-        
-        # 3. Download the file
-        s3.download_file(S3_BUCKET_NAME, S3_MODEL_KEY, local_model_path)
-        
-        # 4. Load the model from the local temporary file
-        model = YOLO(local_model_path)
-        
-        print(f"[INFO] Pest model loaded successfully from S3 key: {S3_MODEL_KEY}")
+        model = YOLO("models/best.pt") # Assumes 'models/best.pt'
         return model
-        
     except Exception as e:
-        # Crucial error display for S3/IAM role problems
-        st.error(f"Error loading Pest Model from S3: {e}. Check IAM role, bucket name, and key.")
+        st.error(f"Error loading pest model: {e}")
         return None
-        
-    finally:
-        # 5. Clean up the temporary file path immediately
-        if os.path.exists(local_model_path):
-            os.remove(local_model_path)
 
-
-# --- NEW HELPER FUNCTION 1 (remains unchanged) ---
+# --- NEW HELPER FUNCTION 1 ---
 def get_pests_from_results(results):
     """
     Extracts a list of detected pest class names from YOLO results.
     """
+    # Get the class name map (e.g., {0: 'aphid', 1: 'thrip'})
     class_names = results[0].names 
+    
+    # Get the detected class indices as a numpy array
     detected_classes = results[0].boxes.cls.cpu().numpy() 
     
     pests_found = []
     for cls_id in detected_classes:
         pests_found.append(class_names[int(cls_id)])
     
+    # Returns a list like ['aphid', 'aphid', 'thrip']
     return pests_found 
 
-# --- NEW HELPER FUNCTION 2 (remains unchanged) ---
+# --- NEW HELPER FUNCTION 2 ---
 def draw_boxes(pil_image, results):
     """
     Draws bounding boxes on an image using Supervision.
@@ -80,6 +55,7 @@ def draw_boxes(pil_image, results):
     detections = sv.Detections.from_ultralytics(results[0])
     
     # 3. Create annotators
+    # 3. Create annotators
     box_annotator = sv.BoxAnnotator(
         thickness=2
     )
@@ -90,10 +66,12 @@ def draw_boxes(pil_image, results):
     )
 
     # 4. Create labels for the detections
+    # 4. Create labels for the detections
     class_names = results[0].names
     labels = [
         f"{class_names[class_id]} {confidence:0.2f}"
-        for confidence, class_id in zip(detections.confidence, detections.class_id)
+        # (xyxy, mask, confidence, class_id, tracker_id, data)
+        for _, _, confidence, class_id, _, _ in detections # <-- THIS IS THE FIX
     ]
     
     # 5. Annotate the image
@@ -115,25 +93,34 @@ def run_pest_detection_batch(image_batch_with_names, pest_model):
     """
     Runs pest detection and returns counts AND a dictionary of images grouped by pest.
     """
-    total_pest_counts = {} 
-    images_by_pest = defaultdict(list)
+    total_pest_counts = {}       # e.g., {'aphid': 5, 'thrip': 2}
+    images_by_pest = defaultdict(list) # e.g., {'aphid': [('img1', img1_annotated), ...]}
     
+    # Cache to store annotated images (so we only draw boxes on each image once)
     annotated_image_cache = {}
 
     for filename, pil_image in image_batch_with_names:
         
-        # --- FIX: Ensure pil_rgb is created properly if RGBA ---
+        # --- THIS IS THE FIX ---
+        # Create a 3-channel RGB image on a white background if it's RGBA
         if pil_image.mode == "RGBA":
+            # Create a new white background image
             white_bg = Image.new("RGB", pil_image.size, (255, 255, 255))
+            # Paste the RGBA image onto the white background, using the alpha channel
             white_bg.paste(pil_image, (0, 0), pil_image)
             pil_rgb = white_bg
         else:
+            # It's already RGB (or some other mode), just convert
             pil_rgb = pil_image.convert("RGB")
         # --- END OF FIX ---
 
+        # 'pil_rgb' is now guaranteed to be a 3-channel RGB image
+        # (composited on white if it was transparent)
+        
         # 1. Run detection on the 3-channel image
         results = pest_model(pil_rgb) 
         
+        # This helper should return a list of all pests found, e.g., ['aphid', 'aphid', 'thrip']
         pests_found_in_image = get_pests_from_results(results) 
 
         if not pests_found_in_image:
@@ -144,9 +131,12 @@ def run_pest_detection_batch(image_batch_with_names, pest_model):
             total_pest_counts[pest] = total_pest_counts.get(pest, 0) + 1
         
         # 3. Get the single annotated image
+        # Check cache first
         if filename in annotated_image_cache:
             annotated_cv2_img = annotated_image_cache[filename]
         else:
+            # If not in cache, create, store, and use
+            # Pass the 3-channel (on-white) image to be drawn on
             annotated_cv2_img = draw_boxes(pil_rgb, results)
             annotated_image_cache[filename] = annotated_cv2_img
         
@@ -154,10 +144,10 @@ def run_pest_detection_batch(image_batch_with_names, pest_model):
         for pest_name in set(pests_found_in_image):
             images_by_pest[pest_name].append((filename, annotated_cv2_img))
     
+    # Return the counts and the new dictionary
     return total_pest_counts, images_by_pest
 
 # ETL CALCULATION (BRANCH 1 - PART 2)
-# ... (All ETL and pipeline functions remain unchanged) ...
 
 def calculate_value_loss(I, market_cost_per_kg):
     """Helper function for ETL calculation."""
@@ -167,11 +157,13 @@ def calculate_value_loss(I, market_cost_per_kg):
 def predict_etl_days(data):
     """
     Core ETL prediction engine.
+    (This is your original function, unchanged)
     """
     etl_days_list = []
     full_progress_data = []
 
     for row in data:
+        # This function expects a very specific row structure
         pest_name, N_current, I_old, _, C, market_cost_per_kg, _, _, fev_con = row
         days = 0
         while days <= 28:
@@ -227,6 +219,12 @@ def predict_etl_days(data):
 def run_etl_calculation(etl_input_data: list):
     """
     Runs the full ETL workflow.
+    Instead of printing to Streamlit, it returns the objects for app.py to display.
+    
+    Args:
+        etl_input_data (list): A list of tuples, where each tuple contains
+                               the required data for predict_etl_days.
+                               e.g., [(pest, N, I, ...), (pest2, N2, I2, ...)]
     """
     
     # 1. Get the raw dataframes from the prediction engine
@@ -252,10 +250,17 @@ def run_etl_calculation(etl_input_data: list):
 
     # 3. Return the three objects for app.py to display
     return df_etl, df_progress, fig
-    
 def run_pest_pipeline_by_crop(crop_groups, pest_model):
     """
     Runs pest detection for each crop group.
+    
+    Args:
+        crop_groups (dict): A dictionary from run_crop_classification, e.g.,
+                            {'Crop 1': [('img1.jpg', img1_pil), ...]}
+        pest_model: The loaded YOLO pest model.
+
+    Returns:
+        A tuple: (pest_results_by_crop, total_pest_counts_all_crops)
     """
     try:
         pest_results_by_crop = {}
