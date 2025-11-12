@@ -85,7 +85,7 @@ def load_clip_classifier():
         from transformers import pipeline
         
         # Changed from local path ("models/clip-model") to a public HF model ID
-        model_id = "srrudra78/agrisavant-clip-model" 
+        model_id = "openai/clip-vit-base-patch16" 
         
         print(f"[INFO] Loading secondary CLIP classifier from {model_id}...")
         classifier = pipeline(task="zero-shot-image-classification", model=model_id)
