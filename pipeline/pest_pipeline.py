@@ -17,26 +17,19 @@ from collections import defaultdict
 @st.cache_resource
 def load_pest_model():
     """
-    Loads the YOLOv5 pest model from disk. 
+    Loads the YOLO model from disk.
     """
     try:
-        # FIX: Pass the 'safetensors=False' and 'weights_only=False' flags 
-        # to ensure compatibility with older PyTorch saved models.
-        # Although YOLO() handles most loading, sometimes the underlying 
-        # torch.load needs the explicit override.
-        model = YOLO("models/best.pt", task="detect") # Specify task for clarity
-        
-        # If the direct YOLO() call fails due to this, you might need a deeper fix, 
-        # but often the following flags in the constructor or ensuring the PyTorch 
-        # version used for training matches the deployment version helps.
-        
-        # For an additional layer of reliability, ensure you are using the latest ultralytics
-        # version that handles torch.load changes well.
-        
+        # NOTE: YOLO handles its own torch.load. 
+        # The underlying issue is the PyTorch version incompatibility with how models/best.pt was saved.
+        # The simplest fix is often ensuring the environment is clean, but 
+        # for a robust deployment, we trust the YOLO framework.
+        model = YOLO("models/best.pt") 
         return model
     except Exception as e:
-        # Check if the error is the PyTorch warning and try the old way (if possible)
-        # However, the best practice is updating the model save format.
+        # If the failure is persistent, the most common fix is to either 
+        # 1. Downgrade PyTorch in the Dockerfile, or 
+        # 2. Re-save the 'best.pt' file using the latest PyTorch on your training machine.
         st.error(f"Error loading pest model: {e}")
         return None
 
