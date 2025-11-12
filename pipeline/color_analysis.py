@@ -59,7 +59,7 @@ def leaf_vein_skeleton(image_bgr: np.ndarray) -> np.ndarray:
     clahe = cv2.createCLAHE(clipLimit=2.0, tileGridSize=(8, 8))
     enhanced = clahe.apply(filtered)
     edges = cv2.adaptiveThreshold(enhanced, 255, cv2.ADAPTIVE_THRESH_GAUSSIAN_C,
-                                     cv2.THRESH_BINARY_INV, 15, 3)
+                                    cv2.THRESH_BINARY_INV, 15, 3)
     kernel = cv2.getStructuringElement(cv2.MORPH_ELLIPSE, (3, 3))
     edges = cv2.morphologyEx(edges, cv2.MORPH_CLOSE, kernel)
 
@@ -94,22 +94,7 @@ def extract_colors_around_mask(
     buffer_ratio: float = 0.15,
     num_colors: int = 8,
     color_type: str = "general"
-) -> List[Tuple[int, int, int]]:
-    """
-    Extracts colors around a mask, runs KMeans to find dominant clusters,
-    and returns a list of colors (RGB tuples) proportional to their cluster size.
-    
-    Args:
-        image_bgr: The image in BGR format.
-        mask: The single-channel mask where foreground pixels are > 0.
-        buffer_ratio: Ratio for dilation buffer around the mask.
-        num_colors: Number of clusters (dominant colors) to find.
-        color_type: Not used internally, but helpful for debugging.
-
-    Returns:
-        List[Tuple[int, int, int]]: A list of RGB color tuples, one for each pixel
-        in the cluster, effectively weighting the color by its count.
-    """
+):
     if image_bgr is None:
         raise ValueError("Input image is None")
     image_rgb = cv2.cvtColor(image_bgr, cv2.COLOR_BGR2RGB)
@@ -126,28 +111,23 @@ def extract_colors_around_mask(
 
     masked_pixels = image_rgb[region == 255].reshape(-1, 3)
     if masked_pixels.size == 0:
-        return []
+        return {} # Return empty dict
 
-    # Filter out near black/white pixels (threshold 20 instead of 5/250 for less aggressive cleaning)
-    valid = ~(((masked_pixels <= 20).all(axis=1)) | ((masked_pixels >= 235).all(axis=1)))
+    valid = ~(((masked_pixels <= 5).all(axis=1)) | ((masked_pixels >= 250).all(axis=1)))
     filtered_pixels = masked_pixels[valid]
     if filtered_pixels.shape[0] == 0:
-        return []
+        return {} # Return empty dict
 
     k = min(num_colors, filtered_pixels.shape[0])
     if k < 1:
-        return []
+        return {} # Return empty dict
 
-    colors_array = filtered_pixels.astype(np.float32)
-    k_unique = min(k, len(np.unique(colors_array, axis=0)))
-    if k_unique < 1: return []
+    kmeans = KMeans(n_clusters=k, random_state=42, n_init="auto")
+    klabels = kmeans.fit_predict(filtered_pixels)
 
-    kmeans = KMeans(n_clusters=k_unique, random_state=42, n_init="auto")
-    klabels = kmeans.fit_predict(colors_array)
-    
-    # --- NEW RETURN STRUCTURE: List of weighted RGB tuples ---
-    weighted_colors = []
-    
+    color_stats: Dict[str, Dict] = {}
+    total_pixels = filtered_pixels.shape[0]
+
     for i in range(kmeans.n_clusters):
         idx = np.where(klabels == i)[0]
         if idx.size == 0:
@@ -155,36 +135,44 @@ def extract_colors_around_mask(
 
         cluster_colors = filtered_pixels[idx]
         mean_color = np.mean(cluster_colors, axis=0).astype(int)
+
         r, g, b = map(int, mean_color.tolist())
-        
-        # Add the mean color (R, G, B) to the list, repeated by its count
-        # This makes the aggregated clustering later more accurate
-        weighted_colors.extend([tuple(mean_color)] * idx.size)
-            
-    return weighted_colors
+        hex_code = f"#{r:02X}{g:02X}{b:02X}"
+        label_str = f"{hex_code}\n({r},{g},{b})"
+        pixel_count = idx.size
+        color_stats[label_str] = {
+            "count": int(pixel_count),
+            "rgb": [r, g, b],
+            "percentage": (pixel_count / total_pixels) * 100.0
+        }
+    
+    return color_stats
 
 # -----------------------------------------------------------------
 # --- NEW HELPER: Gets colors from a single BGR image ---
 # -----------------------------------------------------------------
-def _get_colors_from_image(image_bgr: np.ndarray) -> Tuple[List[Tuple], List[Tuple]]:
+def _get_colors_from_image(image_bgr: np.ndarray) -> Tuple[List, List]:
     """Extracts vein and boundary colors from a single BGR image."""
+    image_bgr = cv2.resize(image_bgr, (600, 600), interpolation=cv2.INTER_AREA)
     all_vein_colors = []
     all_boundary_colors = []
     try:
         # 1. Get Vein Mask and Colors
         vein_mask = leaf_vein_skeleton(image_bgr)
-        # extract_colors_around_mask now returns a list of weighted RGB tuples
-        all_vein_colors = extract_colors_around_mask(
+        vein_stats = extract_colors_around_mask(
             image_bgr, vein_mask, buffer_ratio=0.1, num_colors=4, color_type="vein"
         )
-        
+        for stats in vein_stats.values():
+            all_vein_colors.extend([stats['rgb']] * stats['count'])
+
         # 2. Get Boundary Mask and Colors
         boundary_mask = leaf_boundary_dilation(image_bgr)
-        # extract_colors_around_mask now returns a list of weighted RGB tuples
-        all_boundary_colors = extract_colors_around_mask(
+        boundary_stats = extract_colors_around_mask(
             image_bgr, boundary_mask, buffer_ratio=0.1, num_colors=4, color_type="boundary"
         )
-        
+        for stats in boundary_stats.values():
+            all_boundary_colors.extend([stats['rgb']] * stats['count'])
+    
     except Exception as e:
         print(f"Warning: Color analysis failed for one image: {e}")
         # Return empty lists if this image fails
